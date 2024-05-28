@@ -27,7 +27,7 @@ sudo apt-get install uuid-dev
 ## Compile program
 
 ```
-cc -Wall main.c sensor_simulator.c -lcblite -luuid -o main
+gcc -Wall main.c sensor_simulator.c -lcblite -luuid -o main
 ```
 
 
