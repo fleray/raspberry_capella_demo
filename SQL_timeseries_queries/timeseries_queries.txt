@@ -1,0 +1,17 @@
+
+Capella QUERY :
+---------------------------
+WITH range_start as (STR_TO_MILLIS("2024-03-29T11:00:00")), range_end as (STR_TO_MILLIS("2024-03-30"))
+SELECT t._t AS date, t._v0 AS temperature, d.device as sensor
+FROM _default AS d
+UNNEST _timeseries(d, {"ts_ranges": [range_start, range_end]}) AS t
+WHERE d.device in [1,2,3,4] AND (d.ts_start <= range_end AND d.ts_end >= range_start);
+
+Couchbase Server QUERY (equivalent):
+--------------------------------------------------
+WITH range_start as (STR_TO_MILLIS("2024-03-29T05:21:00")), range_end as (STR_TO_MILLIS("2024-03-30"))
+SELECT MILLIS_TO_TZ(t._t,"UTC") AS date, t._v0 AS temperature, d.device as sensor
+FROM _default AS d
+UNNEST _timeseries(d, {"ts_ranges": [range_start, range_end]}) AS t
+WHERE d.device in [1,2] AND (d.ts_start <= range_end AND d.ts_end >= range_start);
+
