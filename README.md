@@ -41,4 +41,6 @@ Example:
 
 Replace the websocket URL by your Capella App Services endpoint URL.
 
+# Thanks
+A huge thank you to my colleahues Marco (@marcobevilacqua94) for his IoT Simulator logic I re-used to simulate probes values and @Pasin for his help on C code. 
 
