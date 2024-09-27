@@ -2,6 +2,8 @@
 # raspberry_capella_demo
 Mobile demo using Raspberry PI with Couchbase Lite C SDK code and Capella
 
+UPDATE 09/27/2024 : add support for customer scope and collections (measures.temperatures and measures.pressures).
+
 # Pre requisite
 ## Install CB lite dependencies and CB Lite itself on Raspberry PI
 
