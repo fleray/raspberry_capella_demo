@@ -1,5 +1,6 @@
 #include <cbl/CouchbaseLite.h>
 #include <fleece/FLExpert.h>
+#include <stdbool.h>
 #include <time.h>
 #include <float.h>
 #include <inttypes.h>
@@ -118,17 +119,8 @@ static void add_log(char *message)
     free(uuid), uuid = NULL;
 }
 
-static void add_new_json_sample(int sensorId, double *lastValue)
+static void saveDoc(int sensorId, CBLCollection* coll, char *json)
 {
-    CBLCollection *collection = CBLDatabase_DefaultCollection(kDatabase, NULL);
-
-    unsigned long tus = get_current_timestamp();
-
-    // tag::tojson-document[]
-    char *json = generate_json_doc(tus, lastValue, sensorId);
-
-    // FLString json = FLValue_AsString(FLValue(str2));
-
     char *uuid = get_uuid();
 
     char docID[50];
@@ -143,13 +135,13 @@ static void add_new_json_sample(int sensorId, double *lastValue)
     fflush(stdout);
 
     // Create a document and set the JSON data to the document
-    CBLError err;
     CBLDocument *newDoc = CBLDocument_CreateWithID(FLStr(docID));
 
+    CBLError err;
     CBLDocument_SetJSON(newDoc, FLStr(json), &err);
 
     // Save the document to the database
-    CBLCollection_SaveDocument(collection, newDoc, &err);
+    CBLCollection_SaveDocument(coll, newDoc, &err);
 
     // Release created doc after using it
     CBLDocument_Release(newDoc);
@@ -158,7 +150,7 @@ static void add_new_json_sample(int sensorId, double *lastValue)
     free(json), json = NULL;
 
     // Get the document from the database
-    const CBLDocument *doc = CBLCollection_GetDocument(collection, FLStr(docID), &err);
+    const CBLDocument *doc = CBLCollection_GetDocument(coll, FLStr(docID), &err);
 
     // Get document body as JSON
     FLSliceResult docJson = CBLDocument_CreateJSON(doc);
@@ -172,19 +164,48 @@ static void add_new_json_sample(int sensorId, double *lastValue)
     // end::tojson-document[]
 }
 
-static void select_count()
+static void add_new_json_samples(int sensorId, double *lastValueTemp, double *lastValuePress)
+{
+    CBLError err;
+    CBLCollection *coll_temp = CBLDatabase_CreateCollection(kDatabase, FLSTR("temperatures"), FLSTR("measures"), &err);
+    CBLCollection *coll_press = CBLDatabase_CreateCollection(kDatabase, FLSTR("pressures"), FLSTR("measures"), &err);
+
+    unsigned long tus = get_current_timestamp();
+
+    // create fake JSON representing temperature sensor 
+    char *json = generate_json_doc(tus, lastValueTemp, sensorId, true);
+    saveDoc(sensorId, coll_temp, json);
+
+    // create fake JSON representing pressure sensor 
+    json = generate_json_doc(tus, lastValuePress, sensorId, false);
+    saveDoc(sensorId, coll_press, json);
+
+    // free(json); json = NULL;
+    CBLCollection_Release(coll_temp);
+    CBLCollection_Release(coll_press);
+}
+
+static void select_count(char* scope_and_collection)
 {
     CBLDatabase *database = kDatabase;
     CBLError err;
 
-    CBLQuery *query = CBLDatabase_CreateQuery(database, kCBLN1QLLanguage,
-                                              FLSTR("SELECT count(*) FROM _"), NULL, &err);
+    char queryStr[256];
+    strcpy(queryStr, "SELECT count(*) FROM ");
+    strcat(queryStr, scope_and_collection);
 
+    //printf("queryStr is %s\n", queryStr);
+    //fflush(stdout);
+
+    CBLQuery *query = CBLDatabase_CreateQuery(database, kCBLN1QLLanguage,
+                                              FLStr(queryStr), NULL, &err);
+    
     CBLResultSet *results = CBLQuery_Execute(query, &err);
+
     while (CBLResultSet_Next(results))
     {
         int64_t count = FLValue_AsInt(CBLResultSet_ValueForKey(results, FLSTR("$1")));
-        printf("Local DB size : %ld\n", count);
+        printf("Total number of records inside collection %s : %ld\n", scope_and_collection, count);
         fflush(stdout);
     }
 
@@ -194,40 +215,46 @@ static void select_count()
 
 static CBLReplicator *start_replication(char *endpointURL)
 {
-    CBLCollection *collection = CBLDatabase_DefaultCollection(kDatabase, NULL);
-
-    /*
-     * This requires Sync Gateway running with the following config, or equivalent:
-     *
-     * {
-     *     "log":["*"],
-     *     "databases": {
-     *         "db": {
-     *             "server":"walrus:",
-     *             "users": {
-     *                 "GUEST": {"disabled": false, "admin_channels": ["*"] }
-     *             }
-     *         }
-     *     }
-     * }
-     */
-
-    // tag::replication[]
-    // NOTE: No error handling, for brevity (see getting started)
-    // Note: Android emulator needs to use 10.0.2.2 for localhost (10.0.3.2 for GenyMotion)
-
     CBLError err;
+
+    CBLCollection *coll_temp = CBLDatabase_CreateCollection(kDatabase, FLSTR("temperatures"), FLSTR("measures"), &err);
+    CBLCollection *coll_press = CBLDatabase_CreateCollection(kDatabase, FLSTR("pressures"), FLSTR("measures"), &err);
+
+    FLMutableArray names = CBLDatabase_CollectionNames(kDatabase, FLSTR("measures"), &err);
+    // printf("%s", Array(names).toJSONString());
+    FLArrayIterator iter;
+    FLArrayIterator_Begin(names, &iter);
+    FLValue value;
+    while (NULL != (value = FLArrayIterator_GetValue(&iter))) {
+        char tmp[20];
+        FLSlice_ToCString(FLSliceResult_AsSlice (FLValue_ToString(value)), tmp, 20);
+        printf("===> %s\n", tmp);
+        fflush(stdout);
+        FLArrayIterator_Next(&iter);
+    }
+  
     FLString url = FLStr(endpointURL);
     CBLEndpoint *target = CBLEndpoint_CreateWithURL(url, &err);
 
-    CBLReplicationCollection collectionConfig;
-    memset(&collectionConfig, 0, sizeof(CBLReplicationCollection));
-    collectionConfig.collection = collection;
+    CBLReplicationCollection colls[2];
+
+    // Add collection 'Temperatures" to the replication process
+    CBLReplicationCollection collectionConfigTemp;
+    memset(&collectionConfigTemp, 0, sizeof(CBLReplicationCollection));
+    collectionConfigTemp.collection = coll_temp;
+
+    // Add collection 'Pressures" to the replication process
+    CBLReplicationCollection collectionConfigPress;
+    memset(&collectionConfigPress, 0, sizeof(CBLReplicationCollection));
+    collectionConfigPress.collection = coll_press;
+
+    colls[0] = collectionConfigTemp;
+    colls[1] = collectionConfigPress;
 
     CBLReplicatorConfiguration replConfig;
     memset(&replConfig, 0, sizeof(CBLReplicatorConfiguration));
-    replConfig.collectionCount = 1;
-    replConfig.collections = &collectionConfig;
+    replConfig.collectionCount = 2;
+    replConfig.collections = colls;
     replConfig.endpoint = target;
     replConfig.replicatorType = kCBLReplicatorTypePushAndPull;
     replConfig.continuous = true;
@@ -276,11 +303,13 @@ int main(int argc, char **argv)
     create_new_database();
     CBLReplicator *replicator = start_replication(endpointURL);
 
-    double lastValue[NUM_PROBES][1];
+    double lastValueTemp[NUM_PROBES][1];
+    double lastValuePress[NUM_PROBES][1];
 
     for (int j = 0; j < NUM_PROBES; j++)
     {
-        *lastValue[j] = -DBL_MAX;
+        *lastValueTemp[j] = -DBL_MAX;
+        *lastValuePress[j] = -DBL_MAX;
     }
 
     for (;;)
@@ -290,11 +319,13 @@ int main(int argc, char **argv)
         {
             // simulate 2 probles
             int sensorId = i;
-            add_new_json_sample(sensorId, lastValue[i - 1]);
+            add_new_json_samples(sensorId, lastValueTemp[i - 1], lastValuePress[i - 1]);
             // usleep(125000);
         }
         usleep(1000000);
-        select_count();
+        
+        select_count("measures.temperatures");
+        select_count("measures.pressures");
 
         CBLReplicatorStatus thisState = CBLReplicator_Status(replicator);
 
